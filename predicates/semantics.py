@@ -6,6 +6,7 @@
 
 """Semantic analysis of predicate-logic expressions."""
 
+from itertools import product
 from typing import AbstractSet, FrozenSet, Generic, Mapping, Tuple, TypeVar
 
 from logic_utils import frozen, frozendict
@@ -146,7 +147,13 @@ class Model(Generic[T]):
         for function,arity in term.functions():
             assert function in self.function_interpretations and \
                    self.function_arities[function] == arity
-        # Task 7.7
+        if is_constant(term.root) or is_variable(term.root):
+            if is_constant(term.root):
+                return self.constant_interpretations[term.root]
+            return assignment[term.root]
+        args_tuple = tuple(
+            self.evaluate_term(arg, assignment) for arg in term.arguments)
+        return self.function_interpretations[term.root][args_tuple]
 
     def evaluate_formula(self, formula: Formula,
                          assignment: Mapping[str, T] = frozendict()) -> bool:
@@ -175,7 +182,37 @@ class Model(Generic[T]):
         for relation,arity in formula.relations():
             assert relation in self.relation_interpretations and \
                    self.relation_arities[relation] in {-1, arity}
-        # Task 7.8
+        if is_equality(formula.root):
+            return self.evaluate_term(formula.arguments[0], assignment) == \
+                   self.evaluate_term(formula.arguments[1], assignment)
+        if is_relation(formula.root):
+            tup = tuple(self.evaluate_term(t, assignment)
+                        for t in formula.arguments)
+            return tup in self.relation_interpretations[formula.root]
+        if is_unary(formula.root):
+            return not self.evaluate_formula(formula.first, assignment)
+        if is_binary(formula.root):
+            e1 = self.evaluate_formula(formula.first, assignment)
+            e2 = self.evaluate_formula(formula.second, assignment)
+            if formula.root == '&':
+                return e1 and e2
+            if formula.root == '|':
+                return e1 or e2
+            assert formula.root == '->'
+            return (not e1) or e2
+        assert is_quantifier(formula.root)
+        var = formula.variable
+        if formula.root == 'A':
+            for d in self.universe:
+                ext = frozendict(dict(assignment, **{var: d}))
+                if not self.evaluate_formula(formula.statement, ext):
+                    return False
+            return True
+        for d in self.universe:
+            ext = frozendict(dict(assignment, **{var: d}))
+            if self.evaluate_formula(formula.statement, ext):
+                return True
+        return False
 
     def is_model_of(self, formulas: AbstractSet[Formula]) -> bool:
         """Checks if the current model is a model of the given formulas.
@@ -199,4 +236,10 @@ class Model(Generic[T]):
             for relation,arity in formula.relations():
                 assert relation in self.relation_interpretations and \
                        self.relation_arities[relation] in {-1, arity}
-        # Task 7.9
+        for f in formulas:
+            free = sorted(f.free_variables())
+            for vals in product(self.universe, repeat=len(free)):
+                mapping = frozendict(dict(zip(free, vals)))
+                if not self.evaluate_formula(f, mapping):
+                    return False
+        return True
